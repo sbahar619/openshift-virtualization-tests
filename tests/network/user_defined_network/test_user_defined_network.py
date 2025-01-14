@@ -5,6 +5,7 @@ from ocp_resources.resource import Resource
 from ocp_resources.user_defined_network import Layer2UserDefinedNetwork
 from ocp_resources.utils.constants import TIMEOUT_1MINUTE
 
+from libs.net.traffic_generator import connection
 from libs.net.udn import udn_primary_network
 from libs.net.vmspec import lookup_iface_status, lookup_primary_network
 from libs.vm import affinity
@@ -69,6 +70,21 @@ def vmb_udn_non_migratable(namespace, namespaced_layer2_user_defined_network, ud
         yield vm
 
 
+@pytest.fixture
+def tcp_connection(vma_udn, vmb_udn_non_migratable):
+    with connection(
+        server_name=vmb_udn_non_migratable.name,
+        client_name=vma_udn.name,
+        server_vm=vmb_udn_non_migratable,
+        client_vm=vma_udn,
+        server_ip=lookup_iface_status(
+            vm=vmb_udn_non_migratable, iface_name=lookup_primary_network(vm=vmb_udn_non_migratable).name
+        )[IP_ADDRESS],
+        server_port="5201",
+    ) as tcp_connection:
+        yield tcp_connection
+
+
 @pytest.mark.ipv4
 class TestPrimaryUdn:
     @pytest.mark.polarion("CNV-11624")
@@ -107,3 +123,8 @@ class TestPrimaryUdn:
             vm=vmb_udn_non_migratable, iface_name=lookup_primary_network(vm=vmb_udn_non_migratable).name
         )[IP_ADDRESS]
         vma_udn.console(commands=[f"ping -c 3 {target_vm_ip}"], timeout=TIMEOUT_1MIN)
+
+    @pytest.mark.polarion("CNV-11427")
+    def test_connectivity_is_preserved_after_live_migration(self, vma_udn, tcp_connection):
+        migrate_vm_and_verify(vm=vma_udn)
+        assert tcp_connection.is_active()
