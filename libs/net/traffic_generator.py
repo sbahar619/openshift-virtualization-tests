@@ -1,5 +1,5 @@
 import logging
-from typing import Final
+from typing import Any, Final
 
 from ocp_utilities.exceptions import CommandExecFailed
 
@@ -12,73 +12,22 @@ _IPERF_BIN: Final[str] = "iperf3"
 LOGGER = logging.getLogger(__name__)
 
 
-class Server:
+class TrafficGenerator:
     """
-    Represents a server running on a virtual machine for testing network performance.
-    Implemented with iperf3
+    Base class for managing traffic generation on a virtual machine.
 
     Args:
-        name (str): The name of the server instance, used for identification.
-        vm (BaseVirtualMachine): The virtual machine where the server runs.
-        port (str): The port on which the server listens for client connections.
+        vm (BaseVirtualMachine): Virtual machine instance where the commands are executed.
+        cmd (str): Command to execute for traffic generation.
     """
 
     def __init__(
         self,
-        name: str,
         vm: BaseVirtualMachine,
-        port: str,
+        cmd: str,
     ):
-        self._name = name
         self._vm = vm
-        self._port = port
-        self._cmd = f"{_IPERF_BIN} --server --daemon --port {self._port} --one-off"
-
-    @property
-    def name(self) -> str:
-        return self._name
-
-    def start(self) -> None:
-        self._vm.console(
-            commands=[self._cmd],
-            timeout=_DEFAULT_CMD_TIMEOUT_SEC,
-        )
-
-    def stop(self) -> None:
-        self._vm.console(commands=[f"pkill {_IPERF_BIN}"], timeout=_DEFAULT_CMD_TIMEOUT_SEC)
-
-    def is_running(self) -> bool:
-        return _is_process_running(vm=self._vm, cmd=self._cmd)
-
-
-class Client:
-    """
-    Represents a client that connects to a server to test network performance.
-    Implemented with iperf3
-
-    Args:
-        name (str): The name of the client instance, used for identification.
-        vm (BaseVirtualMachine): The virtual machine where the client runs.
-        server_ip (str): The destination IP address of the server the client connects to.
-        server_port (str): The port on which the server listens for connections.
-    """
-
-    def __init__(
-        self,
-        name: str,
-        vm: BaseVirtualMachine,
-        server_ip: str,
-        server_port: str,
-    ):
-        self._name = name
-        self._vm = vm
-        self._server_ip = server_ip
-        self._server_port = server_port
-        self._cmd = f"{_IPERF_BIN} --client {self._server_ip} --time 0 --port {self._server_port}"
-
-    @property
-    def name(self) -> str:
-        return self._name
+        self._cmd = cmd
 
     def start(self) -> None:
         self._vm.console(
@@ -87,10 +36,59 @@ class Client:
         )
 
     def stop(self) -> None:
-        self._vm.console(commands=[f"pkill {_IPERF_BIN}"], timeout=_DEFAULT_CMD_TIMEOUT_SEC)
+        self._vm.console(commands=[f"pkill -f '{self._cmd}'"], timeout=_DEFAULT_CMD_TIMEOUT_SEC)
 
     def is_running(self) -> bool:
-        return _is_process_running(vm=self._vm, cmd=self._cmd)
+        try:
+            self._vm.console(
+                commands=[f"pgrep -ofAx '{self._cmd}'"],
+                timeout=_DEFAULT_CMD_TIMEOUT_SEC,
+            )
+            return True
+        except CommandExecFailed as e:
+            LOGGER.info(f"Process is not running on {self._vm.name}. Error: {str(e)}")
+            return False
+
+
+class TCPServer(TrafficGenerator):
+    """
+    Represents a TCP server for network performance testing. The server is implemented using iperf3 and listens on the
+    specified port. It terminates after handling a single connection.
+
+    Args:
+        server_port (str): The port on which the server listens for client connections.
+    """
+
+    def __init__(
+        self,
+        server_port: str,
+        **kwargs: Any,
+    ):
+        self._server_port = server_port
+        cmd = f"{_IPERF_BIN} --server --port {self._server_port} --one-off"
+        super().__init__(cmd=cmd, **kwargs)
+
+
+class TCPClient(TrafficGenerator):
+    """
+    Represents a TCP client that connects to a server to test network performance.
+    The client uses iperf3 to connect to a server at the specified IP address and port for performance measurement.
+
+    Args:
+        server_ip (str): The destination IP address of the server the client connects to.
+        server_port (str): The port on which the server listens for connections.
+    """
+
+    def __init__(
+        self,
+        server_ip: str,
+        server_port: str,
+        **kwargs: Any,
+    ):
+        self._server_ip = server_ip
+        self._server_port = server_port
+        cmd = f"{_IPERF_BIN} --client {self._server_ip} --time 0 --port {self._server_port}"
+        super().__init__(cmd=cmd, **kwargs)
 
 
 class ConnectionSetupError(Exception):
@@ -101,19 +99,18 @@ class Connection:
     """
     Orchestrates network testing between a server and a client.
 
-    This class initializes a network testing server and client to perform
-    performance testing.
+    This class initializes a TCP network connection between server and client to perform performance testing.
     It manages their lifecycle, ensuring proper startup and cleanup.
 
     Args:
-        server (Server): The server instance used for network testing.
-        client (Client): The client instance used for network testing.
+        server (TCPServer): The server instance used for network testing.
+        client (TCPClient): The client instance used for network testing.
     """
 
     def __init__(
         self,
-        server: Server,
-        client: Client,
+        server: TCPServer,
+        client: TCPClient,
     ):
         self._server = server
         self._client = client
@@ -137,27 +134,13 @@ class Connection:
         return self._server.is_running() and self._client.is_running()
 
 
-def _is_process_running(vm: BaseVirtualMachine, cmd: str) -> bool:
-    try:
-        vm.console(
-            commands=[f"pgrep -ofAx '{cmd}'"],
-            timeout=_DEFAULT_CMD_TIMEOUT_SEC,
-        )
-        return True
-    except CommandExecFailed as e:
-        LOGGER.info(f"Process is not running on VM {vm.name}. Error: {str(e)}")
-        return False
-
-
 def connection(
-    server_name: str,
-    client_name: str,
     server_vm: BaseVirtualMachine,
     client_vm: BaseVirtualMachine,
     server_ip: str,
     server_port: str,
 ) -> Connection:
     return Connection(
-        server=Server(name=server_name, vm=server_vm, port=server_port),
-        client=Client(name=client_name, vm=client_vm, server_ip=server_ip, server_port=server_port),
+        server=TCPServer(vm=server_vm, server_port=server_port),
+        client=TCPClient(vm=client_vm, server_ip=server_ip, server_port=server_port),
     )
