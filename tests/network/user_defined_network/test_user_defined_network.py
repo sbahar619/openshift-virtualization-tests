@@ -73,8 +73,6 @@ def vmb_udn_non_migratable(namespace, namespaced_layer2_user_defined_network, ud
 @pytest.fixture
 def tcp_connection(vma_udn, vmb_udn_non_migratable):
     with connection(
-        server_name=vmb_udn_non_migratable.name,
-        client_name=vma_udn.name,
         server_vm=vmb_udn_non_migratable,
         client_vm=vma_udn,
         server_ip=lookup_iface_status(
