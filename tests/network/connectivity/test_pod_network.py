@@ -88,6 +88,7 @@ def test_connectivity_over_pod_network(
     """
     Check connectivity
     """
+    pytest.fail()
     dst_ip = get_ip_from_vm_or_virt_handler_pod(family=ip_stack_version_matrix__module__, vm=pod_net_running_vmb)
     assert dst_ip, f"Cannot get valid IP address from {pod_net_running_vmb.vmi.name}."
 
