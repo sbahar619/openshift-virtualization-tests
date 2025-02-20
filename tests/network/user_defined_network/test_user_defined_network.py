@@ -51,7 +51,10 @@ def namespaced_layer2_user_defined_network(udn_namespace):
         subnets=["10.10.0.0/24"],
         ipam_lifecycle="Persistent",
     ) as udn:
-        udn.wait_for_network_ready()
+        udn.wait_for_condition(
+            condition="NetworkAllocationSucceeded",
+            status=udn.Condition.Status.TRUE,
+        )
         yield udn
 
 
