@@ -57,6 +57,7 @@ coverage.xml
 .pytest_cache/
 pytest-tests.log
 tests-collected-info
+xunit_results.xml
 
 # Translations
 *.mo
